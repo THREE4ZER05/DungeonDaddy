@@ -176,3 +176,4 @@ async def on_ready():
         print(f"Failed to sync commands: {e}")
 
 bot.run(TOKEN)
+ 
