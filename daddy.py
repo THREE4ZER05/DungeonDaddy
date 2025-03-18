@@ -25,7 +25,52 @@ creator_timezones = {
 
 # ------------------ Bot Setup ------------------
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, reconnect=True)  # Ensures the bot reconnects
+
+# ------------------ Heartbeat Task ------------------
+async def keep_alive():
+    """Sends a small API request to keep the bot's connection active."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            await bot.application_info()  # Light API call to prevent timeout
+            print("Heartbeat sent: Bot is still alive! 💓")
+        except Exception as e:
+            print(f"Heartbeat error: {e}")
+        await asyncio.sleep(300)  # Sleep for 5 minutes
+
+# ------------------ Background Cleanup Task ------------------
+async def cleanup_expired_events():
+    """Removes expired events every 5 minutes to prevent memory overflow."""
+    while True:
+        await asyncio.sleep(300)  
+        now = datetime.now(tz.tzoffset("GMT+1", 3600))
+        expired_events = [msg_id for msg_id, data in active_events.items() if now > data["expires_at"]]
+        for msg_id in expired_events:
+            active_events.pop(msg_id, None)
+        print("Expired events cleaned up!")
+
+# ------------------ Bot Ready Event ------------------
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
+    bot.loop.create_task(keep_alive())  # Start heartbeat task
+
+    try:
+        print("🟡 Clearing all slash commands on bot startup...")
+        bot.tree.clear_commands(guild=None)  # ✅ Clears all commands
+        await bot.tree.sync()  # ✅ Re-syncs commands
+
+        print(f"✅ Slash commands re-registered successfully!")
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
+
+# ------------------ Slash Command: /dd ------------------
+@bot.tree.command(name="dd", description="Creates a new dungeon group request.")
+async def dd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
 
 # ------------------ Global Lists ------------------
 DUNGEONS = [
@@ -560,12 +605,19 @@ class EventEditOptionsView(View):
         return True
 
 # ------------------ Slash Command: /dd ------------------
-@bot.tree.command(name="dd", description="Creates a new dungeon group request.")
 async def dd(interaction: discord.Interaction):
-    if interaction.guild.id in guild_channel_map and interaction.channel.id != guild_channel_map[interaction.guild.id]:
-        await interaction.response.send_message("This command is restricted to the designated channel.", ephemeral=True)
-        return
-    await interaction.response.send_message(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
+    bot.tree.clear_commands()  # Clears any old commands
+    bot.tree.add_command(dd)  # ✅ Manually adds the command (prevents duplicates)
+    await bot.tree.sync()  # ✅ Re-syncs commands
+
+    print(f"✅ Slash commands synced successfully!")
 
 # ------------------ Reaction Role Handlers ------------------
 @bot.event
@@ -604,7 +656,9 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
     role_name = emoji_to_role[payload.emoji.name]
     assigned = event_data["assigned_roles"]
-    if assigned["Tank"] == user or assigned["Healer"] == user or user in assigned["DPS"]:
+    if (assigned["Tank"] and assigned["Tank"].id == user.id) or \
+   (assigned["Healer"] and assigned["Healer"].id == user.id) or \
+   any(member.id == user.id for member in assigned["DPS"]):
         try:
             await message.remove_reaction(payload.emoji, user)
         except Exception:
