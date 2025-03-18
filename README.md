@@ -1,6 +1,6 @@
 # DungeonDaddy Bot 🎮🤖
 
-DungeonDaddy is a Discord bot designed to help organize dungeon groups for **World of Warcraft (WoW)** or similar games. Players can create and join dungeon runs, select roles, and schedule events—all within Discord!
+DungeonDaddy is a Discord bot designed to help organise dungeon groups for **World of Warcraft (WoW)** M+. Players can create and join dungeon runs, select roles, and schedule events—all within Discord!
 
 ---
 
@@ -133,7 +133,7 @@ python daddy.py
 ## ❤️ About This Project
 
 This bot is a **passion project** while I’m learning Python! 🐍  
-I’m new to coding and built **DungeonDaddy** as a fun way to practice, experiment, and improve my skills.
+I’m new to coding and built **DungeonDaddy** as a fun way to practise, experiment, and improve my skills.
 
 I’ll do my best to keep it updated, but please be patient if things break—this is all part of my **learning journey**. 🚀
 
@@ -141,7 +141,7 @@ If you have suggestions or find bugs, feel free to **open an issue** or reach ou
 
 ---
 
-## 📜 License
+## 📜 Licence
 
-This project is licensed under the **MIT License**.  
+This project is licensed under the **MIT Licence**.  
 Feel free to **modify and use it** for your own purposes!
