@@ -1,4 +1,7 @@
-# DungeonDaddy Bot 🎮🤖
+
+![Banner](https://github.com/user-attachments/assets/ec214a4d-9354-4ad1-b4f8-8214634dfad0)
+
+# DungeonDaddy Bot
 
 DungeonDaddy is a Discord bot designed to help organise dungeon groups for **World of Warcraft (WoW)** M+. Players can create and join dungeon runs, select roles, and schedule events—all within Discord!
 
