@@ -41,7 +41,7 @@ DungeonDaddy Bot collects certain data as part of its normal operation within Di
 - Discord User ID and Username
 - Messages for the purpose of event organisation and role selection
 
-For more information on how we handle your data, please refer to our [Privacy Policy](PRIVACY_POLICY.md).
+For more information on how we handle your data, please refer to our [Privacy Policy](privacy_policy.md).
 
 ### Data Protection and Privacy Laws
 
