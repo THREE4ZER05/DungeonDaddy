@@ -6,6 +6,10 @@ from discord.ui import View, Select, Modal, TextInput, Button
 from datetime import datetime, timedelta
 from dateutil import parser, tz
 from dotenv import load_dotenv
+from time import time
+
+reaction_cooldowns = {}  # Stores last reaction timestamps per user
+COOLDOWN_SECONDS = 3  # Set cooldown duration
 
 # ------------------ Load Environment Variables ------------------
 load_dotenv()
@@ -622,6 +626,8 @@ async def on_ready():
 # ------------------ Reaction Role Handlers ------------------
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    global reaction_cooldowns
+
     allowed_emojis = {"🛡️", "💚", "⚔️"}
     
     guild = bot.get_guild(payload.guild_id)
@@ -632,9 +638,17 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
     message = await channel.fetch_message(payload.message_id)
     user = guild.get_member(payload.user_id)
-    if not user:
+    if not user or user.bot:
         return
-    
+
+    # Cooldown check
+    last_used = reaction_cooldowns.get(user.id, 0)
+    if time() - last_used < COOLDOWN_SECONDS:
+        return  # Ignore reaction if within cooldown
+
+    # Update cooldown timestamp
+    reaction_cooldowns[user.id] = time()
+
     if payload.emoji.name not in allowed_emojis:
         try:
             await message.remove_reaction(payload.emoji, user)
@@ -642,28 +656,27 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             pass
         return
     
-    if payload.user_id == bot.user.id:
-        return
     if payload.message_id not in active_events:
         return
     event_data = active_events[payload.message_id]
+    
     wow_tz = tz.tzoffset("GMT+1", 3600)
     if datetime.now(wow_tz) > event_data["expires_at"]:
         return  # Event timed out.
     
     emoji_to_role = {"🛡️": "Tank", "💚": "Healer", "⚔️": "DPS"}
-    if payload.emoji.name not in emoji_to_role:
-        return
     role_name = emoji_to_role[payload.emoji.name]
     assigned = event_data["assigned_roles"]
+
     if (assigned["Tank"] and assigned["Tank"].id == user.id) or \
-   (assigned["Healer"] and assigned["Healer"].id == user.id) or \
-   any(member.id == user.id for member in assigned["DPS"]):
+       (assigned["Healer"] and assigned["Healer"].id == user.id) or \
+       any(member.id == user.id for member in assigned["DPS"]):
         try:
             await message.remove_reaction(payload.emoji, user)
         except Exception:
             pass
         return
+
     if role_name in ["Tank", "Healer"]:
         if assigned[role_name]:
             try:
@@ -682,20 +695,25 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             return
         else:
             assigned["DPS"].append(user)
+
     embed = build_event_embed(event_data["creator"], event_data["dungeon"], event_data["difficulty"],
                               event_data["scheduled"], event_data["comment"], assigned)
     await message.edit(embed=embed)
 
 @bot.event
 async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    global reaction_cooldowns
+
     if payload.user_id == bot.user.id:
         return
     if payload.message_id not in active_events:
         return
     event_data = active_events[payload.message_id]
+    
     wow_tz = tz.tzoffset("GMT+1", 3600)
     if datetime.now(wow_tz) > event_data["expires_at"]:
-        return
+        return  # Event expired
+
     guild = bot.get_guild(payload.guild_id)
     if not guild:
         return
@@ -704,19 +722,30 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
         return
     message = await channel.fetch_message(payload.message_id)
     user = guild.get_member(payload.user_id)
-    if not user:
+    if not user or user.bot:
         return
+
+    # Cooldown check
+    last_used = reaction_cooldowns.get(user.id, 0)
+    if time() - last_used < COOLDOWN_SECONDS:
+        return  # Ignore reaction removal if within cooldown
+
+    # Update cooldown timestamp
+    reaction_cooldowns[user.id] = time()
+
     emoji_to_role = {"🛡️": "Tank", "💚": "Healer", "⚔️": "DPS"}
     if payload.emoji.name not in emoji_to_role:
         return
     role_name = emoji_to_role[payload.emoji.name]
     assigned = event_data["assigned_roles"]
+
     if role_name in ["Tank", "Healer"]:
         if assigned[role_name] == user:
             assigned[role_name] = None
     elif role_name == "DPS":
         if user in assigned["DPS"]:
             assigned["DPS"].remove(user)
+
     embed = build_event_embed(event_data["creator"], event_data["dungeon"], event_data["difficulty"],
                               event_data["scheduled"], event_data["comment"], assigned)
     await message.edit(embed=embed)
