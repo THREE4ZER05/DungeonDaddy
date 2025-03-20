@@ -7,6 +7,17 @@ from datetime import datetime, timedelta
 from dateutil import parser, tz
 from dotenv import load_dotenv
 
+# ------------------ Error Handling Utilities ------------------
+
+def send_error_embed(interaction: discord.Interaction, message: str):
+    """Sends an error message as an embed."""
+    embed = discord.Embed(
+        title="⚠️ Error",
+        description=message,
+        color=discord.Color.red()  # Red for error messages
+    )
+    return interaction.response.send_message(embed=embed, ephemeral=True)
+
 # ------------------ Load and Save Channel Data ------------------
 import json
 
@@ -47,15 +58,15 @@ bot = commands.Bot(command_prefix="!", intents=intents, reconnect=True)  # Ensur
 
 # ------------------ Heartbeat Task ------------------
 async def keep_alive():
-    """Sends a small API request to keep the bot's connection active."""
+    """Sends a small heartbeat to keep the bot's connection active."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            await bot.application_info()  # Light API call to prevent timeout
-            print("Heartbeat sent: Bot is still alive! 💓")
+            latency = bot.latency  # ✅ Get bot latency without API call
+            print(f"Heartbeat sent: Bot is alive! 💓 (Latency: {latency:.2f}s)")
         except Exception as e:
             print(f"Heartbeat error: {e}")
-        await asyncio.sleep(300)  # Sleep for 5 minutes
+        await asyncio.sleep(300)  # ✅ Still checks every 5 minutes
 
 # ------------------ Background Cleanup Task ------------------
 async def cleanup_expired_events():
@@ -77,39 +88,37 @@ async def dd(interaction: discord.Interaction):
     # ✅ If a channel restriction exists, enforce it
     if guild_id in guild_channel_map:
         allowed_channel_id = guild_channel_map[guild_id]
-
         if interaction.channel_id != allowed_channel_id:
-            await interaction.response.send_message(
-                f"⚠️ This command can only be used in <#{allowed_channel_id}>.", 
-                ephemeral=True
-            )
-            return
-    
+            await send_error_embed(interaction, f"This command can only be used in <#{allowed_channel_id}>.")
+            return  # Ensure you have the correct indentation here
+
     # ✅ Proceed with event creation (no restrictions if removed)
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+
 
 # ------------------ Slash Command: /setchannel ------------------
 @bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server.")
 async def setchannel(interaction: discord.Interaction):
     """Slash command to set the bot's designated channel for use in the server."""
     if not interaction.guild:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        await send_error_embed(interaction, "This command can only be used in a server.")
         return
 
     # Get all text channels where the bot has permission to send messages
     channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
 
     if not channels:
-        await interaction.response.send_message("I don't have permission to send messages in any channels.", ephemeral=True)
+        await send_error_embed(interaction, "I don't have permission to send messages in any channels.")
         return
 
-    # ✅ Send an immediate response to prevent timeouts
+    # Send an immediate response to prevent timeouts
     await interaction.response.send_message(
         "✅ Please select a channel for bot commands:", 
         view=ChannelSelectionView(channels),
-        ephemeral=True  # ✅ Only visible to the user running the command
+        ephemeral=True  # Only visible to the user running the command
     )
+
 
 # ------------------ Slash Command: /removechannel ------------------
 @bot.tree.command(name="removechannel", description="Removes the designated bot channel restriction.")
@@ -118,23 +127,21 @@ async def removechannel(interaction: discord.Interaction):
     
     guild_id = interaction.guild.id if interaction.guild else None
     if not guild_id:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        await send_error_embed(interaction, "This command can only be used in a server.")
         return
 
     # Check if a restriction exists
     if guild_id in guild_channel_map:
-        del guild_channel_map[guild_id]  # ✅ Remove the restriction
-        save_channels()  # ✅ Save changes to the JSON file
+        del guild_channel_map[guild_id]  # Remove the restriction
+        await save_channels()  # Save changes to the JSON file
         
         await interaction.response.send_message(
             "✅ The bot’s channel restriction has been removed. Commands can now be used in any channel.", 
             ephemeral=True
         )
     else:
-        await interaction.response.send_message(
-            "⚠️ There is no channel restriction set for this server.", 
-            ephemeral=True
-        )
+        await send_error_embed(interaction, "There is no channel restriction set for this server.")
+
 
 # ------------------ Bot Ready Event ------------------
 @bot.event
@@ -683,9 +690,11 @@ class EventEditOptionsView(View):
         return True
 
 # ------------------ Reaction Role Handlers ------------------
+
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
-    allowed_emojis = {"🛡️", "💚", "⚔️"}
+    """Handles when a user reacts to an event message."""
+    allowed_emojis = {"🛡️", "💚", "⚔️"}  # Define allowed reaction emojis
     
     guild = bot.get_guild(payload.guild_id)
     if not guild:
@@ -700,15 +709,17 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     
     if payload.emoji.name not in allowed_emojis:
         try:
-            await message.remove_reaction(payload.emoji, user)
-        except Exception:
-            pass
+            await message.remove_reaction(payload.emoji, user)  # Remove non-allowed reactions
+        except Exception as e:
+            print(f"Error removing reaction: {e}")
         return
     
     if payload.user_id == bot.user.id:
-        return
+        return  # Ignore the bot's own reactions
+    
     if payload.message_id not in active_events:
-        return
+        return  # If the message is not associated with an active event, exit
+    
     event_data = active_events[payload.message_id]
     wow_tz = tz.tzoffset("GMT+1", 3600)
     if datetime.now(wow_tz) > event_data["expires_at"]:
@@ -716,49 +727,60 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     
     emoji_to_role = {"🛡️": "Tank", "💚": "Healer", "⚔️": "DPS"}
     if payload.emoji.name not in emoji_to_role:
-        return
+        return  # If the emoji is not in the role mapping, exit
+    
     role_name = emoji_to_role[payload.emoji.name]
     assigned = event_data["assigned_roles"]
+    
+    # Prevent double assignment for roles
     if (assigned["Tank"] and assigned["Tank"].id == user.id) or \
-   (assigned["Healer"] and assigned["Healer"].id == user.id) or \
-   any(member.id == user.id for member in assigned["DPS"]):
+       (assigned["Healer"] and assigned["Healer"].id == user.id) or \
+       any(member.id == user.id for member in assigned["DPS"]):
         try:
-            await message.remove_reaction(payload.emoji, user)
-        except Exception:
-            pass
+            await message.remove_reaction(payload.emoji, user)  # Remove the reaction if already assigned
+        except Exception as e:
+            print(f"Error removing reaction: {e}")
         return
+
+    # Assign the user to the appropriate role if it’s available
     if role_name in ["Tank", "Healer"]:
         if assigned[role_name]:
             try:
-                await message.remove_reaction(payload.emoji, user)
-            except Exception:
-                pass
+                await message.remove_reaction(payload.emoji, user)  # Remove if role is already assigned
+            except Exception as e:
+                print(f"Error removing reaction: {e}")
             return
         else:
             assigned[role_name] = user
     elif role_name == "DPS":
         if len(assigned["DPS"]) >= 3:
             try:
-                await message.remove_reaction(payload.emoji, user)
-            except Exception:
-                pass
+                await message.remove_reaction(payload.emoji, user)  # Remove reaction if the DPS slots are full
+            except Exception as e:
+                print(f"Error removing reaction: {e}")
             return
         else:
             assigned["DPS"].append(user)
+
+    # Rebuild the event embed after role assignment
     embed = build_event_embed(event_data["creator"], event_data["dungeon"], event_data["difficulty"],
                               event_data["scheduled"], event_data["comment"], assigned)
     await message.edit(embed=embed)
 
 @bot.event
 async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    """Handles when a user removes their reaction from an event message."""
     if payload.user_id == bot.user.id:
-        return
+        return  # Ignore the bot’s own reactions
+
     if payload.message_id not in active_events:
-        return
+        return  # If the message is not associated with an active event, exit
+    
     event_data = active_events[payload.message_id]
     wow_tz = tz.tzoffset("GMT+1", 3600)
     if datetime.now(wow_tz) > event_data["expires_at"]:
-        return
+        return  # Event timed out.
+    
     guild = bot.get_guild(payload.guild_id)
     if not guild:
         return
@@ -769,20 +791,27 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
     user = guild.get_member(payload.user_id)
     if not user:
         return
+
     emoji_to_role = {"🛡️": "Tank", "💚": "Healer", "⚔️": "DPS"}
     if payload.emoji.name not in emoji_to_role:
-        return
+        return  # If the emoji is not in the role mapping, exit
+    
     role_name = emoji_to_role[payload.emoji.name]
     assigned = event_data["assigned_roles"]
+    
+    # Remove the user from the appropriate role
     if role_name in ["Tank", "Healer"]:
         if assigned[role_name] == user:
             assigned[role_name] = None
     elif role_name == "DPS":
         if user in assigned["DPS"]:
             assigned["DPS"].remove(user)
+
+    # Rebuild the event embed after role removal
     embed = build_event_embed(event_data["creator"], event_data["dungeon"], event_data["difficulty"],
                               event_data["scheduled"], event_data["comment"], assigned)
     await message.edit(embed=embed)
+
 
 
 bot.run(TOKEN)
