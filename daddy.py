@@ -302,21 +302,24 @@ class ChannelSelectionView(View):
 
 # ------------------ Interactive Event Creation ------------------
 # Step 1: Creator Role Selection.
-class CreatorRoleSelectMenu(Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=role, value=role) for role in ["Tank", "Healer", "DPS"]]
-        super().__init__(placeholder="Select your role", options=options)
+class CreatorRoleSelectButton(Button):
+    def __init__(self, label: str, role: str):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.role = role
+
     async def callback(self, interaction: discord.Interaction):
-        if interaction.guild.id in guild_channel_map and interaction.channel.id != guild_channel_map[interaction.guild.id]:
-            await interaction.response.send_message("This command is restricted to the designated channel.", ephemeral=True)
-            return
-        creator_role = self.values[0]
-        await interaction.response.edit_message(content="Select a dungeon:", view=DungeonSelectionView(interaction.user, creator_role))
+        """Handles role selection button press."""
+        creator_role = self.role  # Role that is assigned (Tank/Healer/DPS)
+        # Update the message content and move to the dungeon selection
+        await interaction.response.edit_message(content=f"Role selected: {creator_role}. Now select a dungeon:", view=DungeonSelectionView(interaction.user, creator_role))
 
 class CreatorRoleSelectionView(View):
     def __init__(self):
         super().__init__()
-        self.add_item(CreatorRoleSelectMenu())
+        # Create buttons for each role (Tank, Healer, DPS)
+        self.add_item(CreatorRoleSelectButton("Tank", "Tank"))
+        self.add_item(CreatorRoleSelectButton("Healer", "Healer"))
+        self.add_item(CreatorRoleSelectButton("DPS", "DPS"))
 
 # Step 2: Dungeon Selection.
 class DungeonSelectMenu(Select):
