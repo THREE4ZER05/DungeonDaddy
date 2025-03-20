@@ -62,8 +62,9 @@ async def on_ready():
         print("🟡 Clearing all slash commands on bot startup...")
         bot.tree.clear_commands(guild=None)  # Clears old commands
         
-        # ✅ Explicitly add the slash command before syncing
+        # ✅ Explicitly add commands before syncing
         bot.tree.add_command(dd)
+        bot.tree.add_command(setchannel)
 
         await bot.tree.sync()  # ✅ Re-syncs commands with Discord
 
@@ -71,12 +72,50 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Failed to sync commands: {e}")
 
-
 # ------------------ Slash Command: /dd ------------------
 @bot.tree.command(name="dd", description="Creates a new dungeon group request.")
 async def dd(interaction: discord.Interaction):
+    """Creates a dungeon event but only in the selected bot channel."""
+    guild_id = interaction.guild.id if interaction.guild else None
+
+    # ✅ Check if a channel has been set for this guild
+    if guild_id in guild_channel_map:
+        allowed_channel_id = guild_channel_map[guild_id]
+
+        # ✅ Ensure the command is being used in the correct channel
+        if interaction.channel_id != allowed_channel_id:
+            await interaction.response.send_message(
+                f"⚠️ This command can only be used in <#{allowed_channel_id}>.", 
+                ephemeral=True
+            )
+            return
+    
+    # ✅ Proceed with creating the event
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+
+
+# ------------------ Slash Command: /setchannel ------------------
+@bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server.")
+async def setchannel(interaction: discord.Interaction):
+    """Slash command to set the bot's designated channel for use in the server."""
+    if not interaction.guild:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    # Get all text channels where the bot has permission to send messages
+    channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
+
+    if not channels:
+        await interaction.response.send_message("I don't have permission to send messages in any channels.", ephemeral=True)
+        return
+
+    # Send an ephemeral selection menu
+    await interaction.response.send_message(
+        "Please select a channel for bot commands:", 
+        view=ChannelSelectionView(channels),
+        ephemeral=True  # ✅ Only visible to the user running the command
+    )
 
 # ------------------ Global Lists ------------------
 DUNGEONS = [
@@ -193,33 +232,22 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
 class ChannelSelect(Select):
     def __init__(self, channels: list):
         options = [discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in channels]
-        super().__init__(placeholder="Select channel for bot usage", options=options, min_values=1, max_values=1)
+        super().__init__(placeholder="Select a channel", options=options, min_values=1, max_values=1)
+
     async def callback(self, interaction: discord.Interaction):
         selected_id = int(self.values[0])
-        guild_channel_map[interaction.guild.id] = selected_id
-        await interaction.response.send_message(f"Channel set to <#{selected_id}>.", ephemeral=True)
+        guild_channel_map[interaction.guild.id] = selected_id  # ✅ Store selected channel
+
+        await interaction.response.send_message(
+            f"✅ The bot’s designated channel has been set to <#{selected_id}>.", 
+            ephemeral=True  # ✅ Only the user sees this message
+        )
 
 class ChannelSelectionView(View):
     def __init__(self, channels: list):
         super().__init__(timeout=60)
         self.add_item(ChannelSelect(channels))
 
-@bot.event
-async def on_guild_join(guild: discord.Guild):
-    channels = [ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages]
-    if not channels:
-        return
-    view = ChannelSelectionView(channels)
-    if guild.system_channel:
-        try:
-            await guild.system_channel.send("Please select the channel for bot usage:", view=view)
-        except discord.Forbidden:
-            pass
-    else:
-        try:
-            await guild.owner.send(f"Please select the channel for bot usage in **{guild.name}**:", view=view)
-        except Exception:
-            pass
 
 # ------------------ Interactive Event Creation ------------------
 # Step 1: Creator Role Selection.
