@@ -32,7 +32,7 @@ if not TOKEN:
     raise ValueError("Please set the DISCORD_BOT_TOKEN environment variable.")
 
 # ------------------ Global Data ------------------
-guild_channel_map = load_channels()  # ✅ Ensures stored channels are loaded at startup
+guild_channel_map = load_channels() or {}  # ✅ Ensures it always loads a dictionary
 active_events = {}      # Stores events keyed by the event message ID.
 EVENT_TIMEOUT_MINUTES = 60
 
@@ -68,38 +68,16 @@ async def cleanup_expired_events():
             active_events.pop(msg_id, None)
         print("Expired events cleaned up!")
 
-# ------------------ Bot Ready Event ------------------
-@bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-
-    bot.loop.create_task(keep_alive())  # Start heartbeat task
-
-    try:
-        print("🟡 Clearing all slash commands on bot startup...")
-        bot.tree.clear_commands(guild=None)  # Clears old commands
-        
-        # ✅ Explicitly add commands before syncing
-        bot.tree.add_command(dd)
-        bot.tree.add_command(setchannel)
-
-        await bot.tree.sync()  # ✅ Re-syncs commands with Discord
-
-        print(f"✅ Slash commands re-registered successfully!")
-    except Exception as e:
-        print(f"❌ Failed to sync commands: {e}")
-
 # ------------------ Slash Command: /dd ------------------
 @bot.tree.command(name="dd", description="Creates a new dungeon group request.")
 async def dd(interaction: discord.Interaction):
-    """Creates a dungeon event but only in the selected bot channel."""
+    """Creates a dungeon event but only in the selected bot channel (if restricted)."""
     guild_id = interaction.guild.id if interaction.guild else None
 
-    # ✅ Check if a channel has been set for this guild
+    # ✅ If a channel restriction exists, enforce it
     if guild_id in guild_channel_map:
         allowed_channel_id = guild_channel_map[guild_id]
 
-        # ✅ Ensure the command is being used in the correct channel
         if interaction.channel_id != allowed_channel_id:
             await interaction.response.send_message(
                 f"⚠️ This command can only be used in <#{allowed_channel_id}>.", 
@@ -107,10 +85,9 @@ async def dd(interaction: discord.Interaction):
             )
             return
     
-    # ✅ Proceed with creating the event
+    # ✅ Proceed with event creation (no restrictions if removed)
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
-
 
 # ------------------ Slash Command: /setchannel ------------------
 @bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server.")
@@ -127,12 +104,59 @@ async def setchannel(interaction: discord.Interaction):
         await interaction.response.send_message("I don't have permission to send messages in any channels.", ephemeral=True)
         return
 
-    # Send an ephemeral selection menu
+    # ✅ Send an immediate response to prevent timeouts
     await interaction.response.send_message(
-        "Please select a channel for bot commands:", 
+        "✅ Please select a channel for bot commands:", 
         view=ChannelSelectionView(channels),
         ephemeral=True  # ✅ Only visible to the user running the command
     )
+
+# ------------------ Slash Command: /removechannel ------------------
+@bot.tree.command(name="removechannel", description="Removes the designated bot channel restriction.")
+async def removechannel(interaction: discord.Interaction):
+    """Allows admins to remove the bot's channel restriction so commands can be used anywhere."""
+    
+    guild_id = interaction.guild.id if interaction.guild else None
+    if not guild_id:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    # Check if a restriction exists
+    if guild_id in guild_channel_map:
+        del guild_channel_map[guild_id]  # ✅ Remove the restriction
+        save_channels()  # ✅ Save changes to the JSON file
+        
+        await interaction.response.send_message(
+            "✅ The bot’s channel restriction has been removed. Commands can now be used in any channel.", 
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "⚠️ There is no channel restriction set for this server.", 
+            ephemeral=True
+        )
+
+# ------------------ Bot Ready Event ------------------
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
+    bot.loop.create_task(keep_alive())  # Start heartbeat task
+
+    try:
+        print("🟡 Clearing all slash commands on bot startup...")
+        bot.tree.clear_commands(guild=None)  # Clears old commands
+
+        # ✅ Explicitly add commands before syncing
+        bot.tree.add_command(dd)
+        bot.tree.add_command(setchannel)
+        bot.tree.add_command(removechannel)
+
+        await bot.tree.sync()  # ✅ Re-sync commands with Discord
+
+        print(f"✅ Slash commands re-registered successfully!")
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
 
 # ------------------ Global Lists ------------------
 DUNGEONS = [
