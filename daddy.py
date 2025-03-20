@@ -7,6 +7,23 @@ from datetime import datetime, timedelta
 from dateutil import parser, tz
 from dotenv import load_dotenv
 
+# ------------------ Load and Save Channel Data ------------------
+import json
+
+CHANNEL_FILE = "channels.json"
+
+def load_channels():
+    """Loads stored channel mappings from a JSON file."""
+    try:
+        with open(CHANNEL_FILE, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_channels():
+    """Saves the current `guild_channel_map` to a JSON file."""
+    with open(CHANNEL_FILE, "w") as file:
+        json.dump(guild_channel_map, file, indent=4)
 
 # ------------------ Load Environment Variables ------------------
 load_dotenv()
@@ -15,7 +32,7 @@ if not TOKEN:
     raise ValueError("Please set the DISCORD_BOT_TOKEN environment variable.")
 
 # ------------------ Global Data ------------------
-guild_channel_map = {}  # Optional mapping from guild IDs to allowed channel IDs.
+guild_channel_map = load_channels()  # ✅ Ensures stored channels are loaded at startup
 active_events = {}      # Stores events keyed by the event message ID.
 EVENT_TIMEOUT_MINUTES = 60
 
@@ -228,7 +245,7 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
         # Send a public follow-up message to ping the roles.
         await interaction.followup.send("Open spots: " + ", ".join(open_pings), ephemeral=False)
 
-# ------------------ Channel Selection on Guild Join ------------------
+# ------------------ Channel Selection Dropdown ------------------
 class ChannelSelect(Select):
     def __init__(self, channels: list):
         options = [discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in channels]
@@ -236,7 +253,10 @@ class ChannelSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected_id = int(self.values[0])
-        guild_channel_map[interaction.guild.id] = selected_id  # ✅ Store selected channel
+        guild_id = interaction.guild.id
+
+        guild_channel_map[guild_id] = selected_id  # ✅ Store selected channel
+        save_channels()  # ✅ Save to JSON file
 
         await interaction.response.send_message(
             f"✅ The bot’s designated channel has been set to <#{selected_id}>.", 
