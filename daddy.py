@@ -9,14 +9,22 @@ from dotenv import load_dotenv
 
 # ------------------ Error Handling Utilities ------------------
 
-def send_error_embed(interaction: discord.Interaction, message: str):
-    """Sends an error message as an embed."""
+async def send_error_embed(interaction: discord.Interaction, message: str):
+    """Sends an error message as an embed, ensuring only one response per interaction."""
     embed = discord.Embed(
         title="⚠️ Error",
         description=message,
-        color=discord.Color.red()  # Red for error messages
+        color=discord.Color.red()
     )
-    return interaction.response.send_message(embed=embed, ephemeral=True)
+
+    try:
+        if interaction.response.is_done():  # ✅ Use followup if already responded
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    except discord.HTTPException as e:
+        print(f"⚠️ Error sending embed: {e}")
+
 
 # ------------------ Load and Save Channel Data ------------------
 import json
@@ -85,46 +93,66 @@ async def dd(interaction: discord.Interaction):
     """Creates a dungeon event but only in the selected bot channel (if restricted)."""
     guild_id = interaction.guild.id if interaction.guild else None
 
-    # ✅ If a channel restriction exists, enforce it
     if guild_id in guild_channel_map:
         allowed_channel_id = guild_channel_map[guild_id]
         if interaction.channel_id != allowed_channel_id:
             await send_error_embed(interaction, f"This command can only be used in <#{allowed_channel_id}>.")
-            return  # Ensure you have the correct indentation here
+            return
 
-    # ✅ Proceed with event creation (no restrictions if removed)
-    await interaction.response.defer(ephemeral=True)
-    await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+    try:
+        # ✅ Immediate response to prevent timeout
+        await interaction.response.send_message("⌛ Creating your event...", ephemeral=True)
 
+        # ✅ Follow-up response with the actual role selection
+        await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+
+    except discord.NotFound:
+        print("⚠️ Interaction expired before it could be responded to.")
+    except discord.HTTPException as e:
+        print(f"⚠️ Failed to respond to interaction: {e}")
 
 # ------------------ Slash Command: /setchannel ------------------
-@bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server.")
+@bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server. (ADMIN ONLY)")
 async def setchannel(interaction: discord.Interaction):
     """Slash command to set the bot's designated channel for use in the server."""
+    
+    # ✅ Ensure command is only run in a server
     if not interaction.guild:
         await send_error_embed(interaction, "This command can only be used in a server.")
         return
 
-    # Get all text channels where the bot has permission to send messages
-    channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
+    # ✅ Ensure only admins can use this command
+    if not interaction.user.guild_permissions.administrator:
+        await send_error_embed(interaction, "You must be an admin to use this command.")
+        return
 
+    # ✅ Get all text channels where the bot has permission to send messages
+    channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
+    
     if not channels:
         await send_error_embed(interaction, "I don't have permission to send messages in any channels.")
         return
 
-    # Send an immediate response to prevent timeouts
-    await interaction.response.send_message(
-        "✅ Please select a channel for bot commands:", 
-        view=ChannelSelectionView(channels),
-        ephemeral=True  # Only visible to the user running the command
-    )
+    # ✅ Acknowledge the interaction to prevent "Unknown interaction" error
+    await interaction.response.defer(ephemeral=True)
 
+    # ✅ Send channel selection view
+    view = ChannelSelectionView(channels)
+    message = await interaction.followup.send("✅ Please select a channel for bot commands:", view=view, ephemeral=True)
+    
+    # ✅ Store message reference in the view (for cleanup)
+    view.message = message
 
 # ------------------ Slash Command: /removechannel ------------------
-@bot.tree.command(name="removechannel", description="Removes the designated bot channel restriction.")
+@bot.tree.command(name="removechannel", description="Removes the designated bot channel restriction. (ADMIN ONLY)")
 async def removechannel(interaction: discord.Interaction):
     """Allows admins to remove the bot's channel restriction so commands can be used anywhere."""
     
+    # Check if the user is an admin
+    if not interaction.user.guild_permissions.administrator:
+        await send_error_embed(interaction, "You must be an admin to use this command.")
+        return
+
     guild_id = interaction.guild.id if interaction.guild else None
     if not guild_id:
         await send_error_embed(interaction, "This command can only be used in a server.")
@@ -141,7 +169,6 @@ async def removechannel(interaction: discord.Interaction):
         )
     else:
         await send_error_embed(interaction, "There is no channel restriction set for this server.")
-
 
 # ------------------ Bot Ready Event ------------------
 @bot.event
@@ -286,18 +313,46 @@ class ChannelSelect(Select):
         selected_id = int(self.values[0])
         guild_id = interaction.guild.id
 
-        guild_channel_map[guild_id] = selected_id  # ✅ Store selected channel
-        save_channels()  # ✅ Save to JSON file
+        # Store selected channel and save it to JSON file
+        guild_channel_map[guild_id] = selected_id
+        save_channels()
 
-        await interaction.response.send_message(
-            f"✅ The bot’s designated channel has been set to <#{selected_id}>.", 
-            ephemeral=True  # ✅ Only the user sees this message
-        )
+        try:
+            # Check if the interaction is still valid before responding
+            if interaction.response.is_done():
+                await interaction.followup.send(f"✅ The bot’s designated channel has been set to <#{selected_id}>.", ephemeral=True)
+            else:
+                await interaction.response.send_message(f"✅ The bot’s designated channel has been set to <#{selected_id}>.", ephemeral=True)
+
+            # Stop the view after the selection
+            self.view.stop()
+
+            # Delete the original selection message after 10 seconds
+            await asyncio.sleep(10)
+            if self.view.message:
+                await self.view.message.delete()
+
+        except discord.NotFound:
+            print("⚠️ Interaction was no longer valid.")
+        except discord.HTTPException:
+            print("⚠️ Failed to delete the message or send a follow-up.")
+
 
 class ChannelSelectionView(View):
     def __init__(self, channels: list):
-        super().__init__(timeout=60)
+        super().__init__(timeout=30)  # Allow up to 30 seconds for selection
         self.add_item(ChannelSelect(channels))
+        self.message = None  # Store the message for later deletion
+
+    async def on_timeout(self):
+        """Deletes the selection message after timeout to prevent clutter."""
+        if self.message:
+            try:
+                await self.message.delete()
+            except discord.NotFound:
+                print("⚠️ Channel selection message was already deleted.")
+            except discord.HTTPException:
+                print("⚠️ Failed to delete channel selection message. It may no longer exist.")
 
 
 # ------------------ Interactive Event Creation ------------------
