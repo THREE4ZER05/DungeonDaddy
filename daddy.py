@@ -233,7 +233,7 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
     """Finalizes the event creation by sending the embed, adding reactions, updating active_events, and pinging available roles."""
     wow_tz = tz.tzoffset("GMT+1", 3600)
     expires_at = datetime.now(wow_tz) + timedelta(minutes=EVENT_TIMEOUT_MINUTES)
-    await interaction.response.edit_message(content="Event created!", view=None)
+    await interaction.response.edit_message(content="Event created!", view=None, delete_after=5)
     embed = build_event_embed(creator, dungeon, difficulty, sched_str, comment, assigned_roles, scheduled_dt)
     msg = await interaction.followup.send(embed=embed, view=EventEditOptionsView(creator, msg_id=None))
     updated_view = EventEditOptionsView(creator, msg.id)
