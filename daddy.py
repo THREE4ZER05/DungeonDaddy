@@ -91,57 +91,49 @@ async def cleanup_expired_events():
 @bot.tree.command(name="dd", description="Creates a new dungeon group request.")
 async def dd(interaction: discord.Interaction):
     """Creates a dungeon event but only in the selected bot channel (if restricted)."""
+
     guild_id = interaction.guild.id if interaction.guild else None
 
+    # ✅ If a channel restriction exists, enforce it
     if guild_id in guild_channel_map:
         allowed_channel_id = guild_channel_map[guild_id]
         if interaction.channel_id != allowed_channel_id:
             await send_error_embed(interaction, f"This command can only be used in <#{allowed_channel_id}>.")
             return
 
-    try:
-        # ✅ Immediate response to prevent timeout
-        await interaction.response.send_message("⌛ Creating your event...", ephemeral=True)
-
-        # ✅ Follow-up response with the actual role selection
-        await interaction.followup.send(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
-
-    except discord.NotFound:
-        print("⚠️ Interaction expired before it could be responded to.")
-    except discord.HTTPException as e:
-        print(f"⚠️ Failed to respond to interaction: {e}")
+    # ✅ Directly respond without deferring first
+    await interaction.response.send_message(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
 
 # ------------------ Slash Command: /setchannel ------------------
 @bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server. (ADMIN ONLY)")
 async def setchannel(interaction: discord.Interaction):
     """Slash command to set the bot's designated channel for use in the server."""
     
-    # ✅ Ensure command is only run in a server
-    if not interaction.guild:
-        await send_error_embed(interaction, "This command can only be used in a server.")
-        return
-
-    # ✅ Ensure only admins can use this command
+    # Ensure the user is an admin
     if not interaction.user.guild_permissions.administrator:
-        await send_error_embed(interaction, "You must be an admin to use this command.")
+        await interaction.response.send_message("⚠️ You must be an admin to use this command.", ephemeral=True)
         return
 
-    # ✅ Get all text channels where the bot has permission to send messages
+    if not interaction.guild:
+        await interaction.response.send_message("⚠️ This command can only be used in a server.", ephemeral=True)
+        return
+
+    # Get all text channels where the bot has permission to send messages
     channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
-    
+
     if not channels:
-        await send_error_embed(interaction, "I don't have permission to send messages in any channels.")
+        await interaction.response.send_message("⚠️ I don't have permission to send messages in any channels.", ephemeral=True)
         return
 
-    # ✅ Acknowledge the interaction to prevent "Unknown interaction" error
-    await interaction.response.defer(ephemeral=True)
+    # ✅ Acknowledge the interaction instantly
+    await interaction.response.defer(ephemeral=True)  
 
-    # ✅ Send channel selection view
+    # ✅ Send the channel selection menu
     view = ChannelSelectionView(channels)
-    message = await interaction.followup.send("✅ Please select a channel for bot commands:", view=view, ephemeral=True)
-    
-    # ✅ Store message reference in the view (for cleanup)
-    view.message = message
+    await interaction.followup.send("✅ Please select a channel for bot commands:", view=view, ephemeral=True)
+
+    # ✅ Store message in the view for cleanup
+    view.message = await interaction.original_response()
 
 # ------------------ Slash Command: /removechannel ------------------
 @bot.tree.command(name="removechannel", description="Removes the designated bot channel restriction. (ADMIN ONLY)")
