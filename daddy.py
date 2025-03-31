@@ -262,9 +262,14 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
     expires_at = datetime.now(wow_tz) + timedelta(minutes=EVENT_TIMEOUT_MINUTES)
     await interaction.response.edit_message(content="Event created!", view=None, delete_after=5)
     embed = build_event_embed(creator, dungeon, difficulty, sched_str, comment, assigned_roles, scheduled_dt)
-    msg = await interaction.followup.send(embed=embed, view=EventEditOptionsView(creator, msg_id=None))
-    updated_view = EventEditOptionsView(creator, msg.id)
-    await msg.edit(view=updated_view)
+    
+    # First, send the message and assign it to `msg`
+    msg = await interaction.followup.send(embed=embed)
+    
+    # Then, edit the message to include the view
+    await msg.edit(view=EventEditOptionsView(msg.id, creator))
+    
+    # Store the event in `active_events`
     active_events[msg.id] = {
         "creator": creator,
         "dungeon": dungeon,
@@ -274,10 +279,13 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
         "assigned_roles": assigned_roles,
         "expires_at": expires_at
     }
+    
+    # Add reactions for role selection
     await msg.add_reaction("🛡️")
     await msg.add_reaction("💚")
     await msg.add_reaction("⚔️")
-    # Ping available roles.
+    
+    # Ping available roles
     guild = interaction.guild
     open_pings = []
     if assigned_roles["Tank"] is None:
@@ -293,8 +301,8 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
         if role_obj and role_obj.mentionable:
             open_pings.append(role_obj.mention)
     if open_pings:
-        # Send a public follow-up message to ping the roles.
-        await interaction.followup.send("Open spots: " + ", ".join(open_pings), ephemeral=False)
+        # Send a reply to the event embed message to ping the roles
+        await msg.reply("Open spots: " + ", ".join(open_pings), mention_author=False)
 
 # ------------------ Channel Selection Dropdown ------------------
 class ChannelSelect(Select):
@@ -443,23 +451,43 @@ class CustomTimeModal(Modal):
         self.dungeon = dungeon
         self.difficulty = difficulty
         self.custom_time = TextInput(
-            label="Enter start time (DD/MM/YYYY HH:MM)",
+            label="Start time (DD/MM/YYYY HH:MM)",  # Shortened label
             style=discord.TextStyle.short,
             placeholder="20/03/2025 15:00",
             required=True
         )
         self.add_item(self.custom_time)
+
     async def on_submit(self, interaction: discord.Interaction):
-        wow_tz = tz.tzoffset("GMT+1", 3600)
         try:
+            # Parse the input time
+            user_tz = tz.gettz(creator_timezones.get(interaction.user.id, "UTC"))
             dt = parser.parse(self.custom_time.value, dayfirst=True)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=wow_tz)
-            sched_str = format_schedule(dt)
-            scheduled_dt = dt
+                dt = dt.replace(tzinfo=user_tz)
+            
+            # Convert to UTC for comparison
+            now_utc = datetime.now(tz.UTC)
+            dt_utc = dt.astimezone(tz.UTC)
+
+            # Check if the time is in the past
+            if dt_utc < now_utc:
+                await interaction.response.send_message(
+                    "⚠️ The selected time is in the past. Please choose a future time.", ephemeral=True
+                )
+                return
+
+            # Format the time for display
+            sched_str = dt_utc.strftime("%d/%m/%Y %H:%M (UTC)")
+            scheduled_dt = dt_utc
+
         except Exception:
-            sched_str = self.custom_time.value
-            scheduled_dt = None
+            await interaction.response.send_message(
+                "⚠️ Invalid time format. Please use the format DD/MM/YYYY HH:MM.", ephemeral=True
+            )
+            return
+
+        # Proceed with event creation
         assigned_roles = {"Tank": None, "Healer": None, "DPS": []}
         if self.creator_role == "Tank":
             assigned_roles["Tank"] = self.creator
@@ -467,9 +495,12 @@ class CustomTimeModal(Modal):
             assigned_roles["Healer"] = self.creator
         elif self.creator_role == "DPS":
             assigned_roles["DPS"] = [self.creator]
+
         await interaction.response.send_message("Event time set!", ephemeral=True)
-        await interaction.followup.send(view=CommentPromptView(self.creator, self.creator_role, self.dungeon, self.difficulty, sched_str, scheduled_dt, assigned_roles))
-        
+        await interaction.followup.send(
+            view=CommentPromptView(self.creator, self.creator_role, self.dungeon, self.difficulty, sched_str, scheduled_dt, assigned_roles)
+        )
+
 # ------------------ Comment Prompt View ------------------
 class CommentPromptView(View):
     def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None, assigned_roles: dict):
@@ -514,21 +545,6 @@ class CommentModalForPrompt(Modal):
         await finalize_event(interaction, self.parent_view.creator, self.parent_view.dungeon, self.parent_view.difficulty, self.parent_view.sched_str, self.parent_view.scheduled_dt, self.parent_view.comment, self.parent_view.assigned_roles)
 
 # ------------------ Event Edit Options (Editing) ------------------
-class EventEditOptionsView(View):
-    def __init__(self, creator: discord.Member, msg_id: int | None):
-        super().__init__(timeout=None)
-        self.creator_id = creator.id
-        if msg_id is not None:
-            self.add_item(EditDungeonButton(msg_id))
-            self.add_item(EditKeyLevelButton(msg_id))
-            self.add_item(EditScheduleButton(msg_id))
-            self.add_item(EditCommentButton(msg_id))
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.creator_id:
-            await interaction.response.send_message("Only the event creator can use these buttons.", ephemeral=True)
-            return False
-        return True
-
 class EditDungeonButton(Button):
     def __init__(self, event_id: int):
         super().__init__(label="Edit Dungeon", style=discord.ButtonStyle.primary)
@@ -711,10 +727,17 @@ class EditCommentModal(Modal):
         await msg.edit(embed=embed)
         await interaction.response.send_message("Comment updated.", ephemeral=True)
 
-class EditCommentButton(Button):
+class EditEventSelectMenu(Select):
     def __init__(self, event_id: int):
-        super().__init__(label="Edit Comment", style=discord.ButtonStyle.primary)
         self.event_id = event_id
+        options = [
+            discord.SelectOption(label="Edit Dungeon", value="edit_dungeon"),
+            discord.SelectOption(label="Edit Key Level", value="edit_key_level"),
+            discord.SelectOption(label="Edit Schedule", value="edit_schedule"),
+            discord.SelectOption(label="Edit Comment", value="edit_comment"),
+        ]
+        super().__init__(placeholder="Select an option to edit", options=options)
+
     async def callback(self, interaction: discord.Interaction):
         event_data = active_events.get(self.event_id)
         if not event_data:
@@ -723,20 +746,106 @@ class EditCommentButton(Button):
         if interaction.user != event_data["creator"]:
             await interaction.response.send_message("Only the event creator can edit this event.", ephemeral=True)
             return
-        await interaction.response.send_modal(EditCommentModal(self.event_id))
+
+        if self.values[0] == "edit_dungeon":
+            await interaction.response.send_message("Select new dungeon:", view=EditDungeonView(self.event_id), ephemeral=True)
+        elif self.values[0] == "edit_key_level":
+            await interaction.response.send_message("Select new key level:", view=EditKeyLevelView(self.event_id), ephemeral=True)
+        elif self.values[0] == "edit_schedule":
+            await interaction.response.send_message("Select new schedule:", view=EditScheduleView(self.event_id), ephemeral=True)
+        elif self.values[0] == "edit_comment":
+            await interaction.response.send_modal(EditCommentModal(self.event_id))
+
+
+class ConfirmDeleteView(View):
+    """View with Confirm Delete and Cancel buttons."""
+    def __init__(self, event_id: int, creator: discord.Member):
+        super().__init__(timeout=30)  # Timeout after 30 seconds
+        self.event_id = event_id
+        self.creator = creator
+
+        # Add the "Confirm Delete" button
+        self.add_item(ConfirmDeleteButton(event_id))
+
+        # Add the "Cancel" button
+        self.add_item(CancelDeleteButton(event_id, creator))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Ensure only the event creator can interact with the confirmation buttons
+        if interaction.user.id != self.creator.id:
+            await interaction.response.send_message("Only the event creator can confirm or cancel this action.", ephemeral=True)
+            return False
+        return True
+
+
+class CancelDeleteButton(Button):
+    """Button to cancel event deletion."""
+    def __init__(self, event_id: int, creator: discord.Member):
+        super().__init__(label="Cancel", style=discord.ButtonStyle.secondary)
+        self.event_id = event_id
+        self.creator = creator
+
+    async def callback(self, interaction: discord.Interaction):
+        # Restore the original EventEditOptionsView
+        await interaction.response.edit_message(
+            content="Event deletion canceled.",
+            view=EventEditOptionsView(self.event_id, self.creator)
+        )
+
+
+class ConfirmDeleteButton(Button):
+    """Button to confirm event deletion."""
+    def __init__(self, event_id: int):
+        super().__init__(label="Confirm Delete", style=discord.ButtonStyle.danger)
+        self.event_id = event_id
+
+    async def callback(self, interaction: discord.Interaction):
+        event_data = active_events.get(self.event_id)
+        if not event_data:
+            await interaction.response.send_message("Event not found.", ephemeral=True)
+            return
+
+        # Delete the event message
+        guild = interaction.guild
+        channel = guild.get_channel(interaction.channel_id)
+        msg = await channel.fetch_message(self.event_id)
+        await msg.delete()
+
+        # Remove the event from active_events
+        active_events.pop(self.event_id, None)
+
+        await interaction.response.send_message("✅ Event deleted successfully.", ephemeral=True)
+
+
+class DeleteEventButton(Button):
+    """Button to initiate event deletion with confirmation."""
+    def __init__(self, event_id: int):
+        super().__init__(label="Delete Event", style=discord.ButtonStyle.danger)
+        self.event_id = event_id
+
+    async def callback(self, interaction: discord.Interaction):
+        event_data = active_events.get(self.event_id)
+        if not event_data:
+            await interaction.response.send_message("Event not found.", ephemeral=True)
+            return
+        if interaction.user != event_data["creator"]:
+            await interaction.response.send_message("Only the event creator can delete this event.", ephemeral=True)
+            return
+
+        # Show the confirmation view
+        await interaction.response.edit_message(content="Are you sure you want to delete this event?", view=ConfirmDeleteView(self.event_id, interaction.user))
+
 
 class EventEditOptionsView(View):
-    def __init__(self, creator: discord.Member, msg_id: int | None):
+    def __init__(self, event_id: int, creator: discord.Member):
         super().__init__(timeout=None)
         self.creator_id = creator.id
-        if msg_id is not None:
-            self.add_item(EditDungeonButton(msg_id))
-            self.add_item(EditKeyLevelButton(msg_id))
-            self.add_item(EditScheduleButton(msg_id))
-            self.add_item(EditCommentButton(msg_id))
+        self.add_item(EditEventSelectMenu(event_id))  # Dropdown for editing options
+        self.add_item(DeleteEventButton(event_id))   # Red delete button
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.creator_id:
-            await interaction.response.send_message("Only the event creator can use these buttons.", ephemeral=True)
+            await interaction.response.send_message("Only the event creator can use these options.", ephemeral=True)
             return False
         return True
 
