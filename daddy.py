@@ -277,7 +277,8 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
         "scheduled": sched_str,
         "comment": comment,
         "assigned_roles": assigned_roles,
-        "expires_at": expires_at
+        "expires_at": expires_at,
+        "role_pings_message": None  # Placeholder for the role pings message
     }
     
     # Add reactions for role selection
@@ -302,7 +303,20 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
             open_pings.append(role_obj.mention)
     if open_pings:
         # Send a reply to the event embed message to ping the roles
-        await msg.reply("Open spots: " + ", ".join(open_pings), mention_author=False)
+        role_pings_message = await msg.reply("Open spots: " + ", ".join(open_pings), mention_author=False)
+        
+        # Store the role pings message in the event data
+        active_events[msg.id]["role_pings_message"] = role_pings_message
+
+        # Schedule the deletion of the role pings message after 15 minutes
+        async def delete_role_pings_message():
+            await asyncio.sleep(900)  # 15 minutes
+            try:
+                await role_pings_message.delete()
+            except discord.NotFound:
+                pass  # Message already deleted
+
+        asyncio.create_task(delete_role_pings_message())
 
 # ------------------ Channel Selection Dropdown ------------------
 class ChannelSelect(Select):
@@ -810,6 +824,14 @@ class ConfirmDeleteButton(Button):
         channel = guild.get_channel(interaction.channel_id)
         msg = await channel.fetch_message(self.event_id)
         await msg.delete()
+
+        # Delete the role pings message if it exists
+        role_pings_message = event_data.get("role_pings_message")
+        if role_pings_message:
+            try:
+                await role_pings_message.delete()
+            except discord.NotFound:
+                pass  # Message already deleted
 
         # Remove the event from active_events
         active_events.pop(self.event_id, None)
