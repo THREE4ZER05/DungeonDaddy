@@ -746,7 +746,11 @@ class EventEditOptionsView(View):
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     """Handles when a user reacts to an event message."""
     allowed_emojis = {"🛡️", "💚", "⚔️"}  # Define allowed reaction emojis
-    
+
+    # Check if the message is part of an active event
+    if payload.message_id not in active_events:
+        return  # Ignore reactions on non-event messages
+
     guild = bot.get_guild(payload.guild_id)
     if not guild:
         return
@@ -757,32 +761,32 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     user = guild.get_member(payload.user_id)
     if not user:
         return
-    
+
+    # Ignore the bot's own reactions
+    if payload.user_id == bot.user.id:
+        return
+
+    # Check if the emoji is allowed
     if payload.emoji.name not in allowed_emojis:
         try:
             await message.remove_reaction(payload.emoji, user)  # Remove non-allowed reactions
         except Exception as e:
             print(f"Error removing reaction: {e}")
         return
-    
-    if payload.user_id == bot.user.id:
-        return  # Ignore the bot's own reactions
-    
-    if payload.message_id not in active_events:
-        return  # If the message is not associated with an active event, exit
-    
+
+    # Process the reaction for the event
     event_data = active_events[payload.message_id]
     wow_tz = tz.tzoffset("GMT+1", 3600)
     if datetime.now(wow_tz) > event_data["expires_at"]:
         return  # Event timed out.
-    
+
     emoji_to_role = {"🛡️": "Tank", "💚": "Healer", "⚔️": "DPS"}
-    if payload.emoji.name not in emoji_to_role:
+    role_name = emoji_to_role.get(payload.emoji.name)
+    if not role_name:
         return  # If the emoji is not in the role mapping, exit
-    
-    role_name = emoji_to_role[payload.emoji.name]
+
     assigned = event_data["assigned_roles"]
-    
+
     # Prevent double assignment for roles
     if (assigned["Tank"] and assigned["Tank"].id == user.id) or \
        (assigned["Healer"] and assigned["Healer"].id == user.id) or \
@@ -859,10 +863,14 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
             assigned["DPS"].remove(user)
 
     # Rebuild the event embed after role removal
-    embed = build_event_embed(event_data["creator"], event_data["dungeon"], event_data["difficulty"],
-                              event_data["scheduled"], event_data["comment"], assigned)
+    embed = build_event_embed(
+        event_data["creator"],
+        event_data["dungeon"],
+        event_data["difficulty"],
+        event_data["scheduled"],
+        event_data["comment"],
+        assigned
+    )
     await message.edit(embed=embed)
-
-
 
 bot.run(TOKEN)
