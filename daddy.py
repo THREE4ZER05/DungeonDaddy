@@ -119,7 +119,8 @@ async def setchannel(interaction: discord.Interaction):
         return
 
     # Get all text channels where the bot has permission to send messages
-    channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
+    channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages][:25]
+
 
     if not channels:
         await interaction.response.send_message("⚠️ I don't have permission to send messages in any channels.", ephemeral=True)
