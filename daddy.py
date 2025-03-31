@@ -80,11 +80,24 @@ async def keep_alive():
 async def cleanup_expired_events():
     """Removes expired events every 5 minutes to prevent memory overflow."""
     while True:
-        await asyncio.sleep(300)  
+        await asyncio.sleep(300)  # Run every 5 minutes
         now = datetime.now(tz.tzoffset("GMT+1", 3600))
         expired_events = [msg_id for msg_id, data in active_events.items() if now > data["expires_at"]]
+        
         for msg_id in expired_events:
-            active_events.pop(msg_id, None)
+            event_data = active_events.pop(msg_id, None)  # Remove from memory
+            if event_data:
+                guild = bot.get_guild(event_data["creator"].guild.id)
+                if guild:
+                    channel = guild.get_channel(event_data["creator"].channel.id)
+                    if channel:
+                        try:
+                            msg = await channel.fetch_message(msg_id)
+                            await msg.delete()  # Delete the event message
+                        except discord.NotFound:
+                            pass  # Message already deleted
+                        except discord.HTTPException as e:
+                            print(f"Failed to delete expired event message: {e}")
         print("Expired events cleaned up!")
 
 # ------------------ Slash Command: /dd ------------------
@@ -167,8 +180,8 @@ async def removechannel(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
-
     bot.loop.create_task(keep_alive())  # Start heartbeat task
+    bot.loop.create_task(cleanup_expired_events())  # Start cleanup task
 
     try:
         print("🟡 Clearing all slash commands on bot startup...")
