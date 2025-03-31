@@ -105,6 +105,22 @@ python daddy.py
 
 ---
 
+### ✅ Bot Permissions (for Invite Link)
+
+| **Permission**                  | **Why it's Needed**                                                                 |
+|---------------------------------|--------------------------------------------------------------------------------------|
+| **Send Messages**               | To reply in channels, slash commands, and send embeds                               |
+| **Read Message History**        | To detect past messages or react appropriately                                      |
+| **Embed Links**                 | To send formatted embedded messages (used heavily in your bot)                      |
+| **Use External Emojis**         | If you're planning to use custom emojis in the future                               |
+| **Add Reactions**               | To add reaction roles like 🛡️, 💚, ⚔️                                               |
+| **Manage Messages** *(optional but recommended)* | To remove invalid reactions or delete messages                       |
+| **Read Messages / View Channels** | To detect where it's being used and interact with users                          |
+| **Use Application Commands**    | Enables slash commands (like `/dd`, `/setchannel`)                                  |
+| **Manage Roles** *(optional)*   | Only required if you later want the bot to assign roles based on reactions          |
+
+---
+
 ### 🔹 Bot Keeps Going Offline
 
 - Check that the **heartbeat system** is running properly.
