@@ -89,11 +89,20 @@ async def cleanup_expired_events():
             if event_data:
                 guild = bot.get_guild(event_data["creator"].guild.id)
                 if guild:
-                    channel = guild.get_channel(event_data["creator"].channel.id)
+                    channel = guild.get_channel(event_data["channel_id"])  # Use the stored channel ID
                     if channel:
                         try:
+                            # Delete the event message
                             msg = await channel.fetch_message(msg_id)
-                            await msg.delete()  # Delete the event message
+                            await msg.delete()
+
+                            # Delete the role pings message if it exists
+                            role_pings_message = event_data.get("role_pings_message")
+                            if role_pings_message:
+                                try:
+                                    await role_pings_message.delete()
+                                except discord.NotFound:
+                                    pass  # Message already deleted
                         except discord.NotFound:
                             pass  # Message already deleted
                         except discord.HTTPException as e:
@@ -272,7 +281,14 @@ def build_event_embed(
 async def finalize_event(interaction: discord.Interaction, creator: discord.Member, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None, comment: str, assigned_roles: dict):
     """Finalizes the event creation by sending the embed, adding reactions, updating active_events, and pinging available roles."""
     wow_tz = tz.tzoffset("GMT+1", 3600)
-    expires_at = datetime.now(wow_tz) + timedelta(minutes=EVENT_TIMEOUT_MINUTES)
+    now = datetime.now(wow_tz)
+
+    # Set expiration time to 30 minutes after the event creation or the scheduled time (whichever is later)
+    if scheduled_dt:
+        expires_at = max(scheduled_dt + timedelta(minutes=30), now + timedelta(minutes=30))
+    else:
+        expires_at = now + timedelta(minutes=30)
+
     await interaction.response.edit_message(content="Event created!", view=None, delete_after=5)
     embed = build_event_embed(creator, dungeon, difficulty, sched_str, comment, assigned_roles, scheduled_dt)
     
@@ -285,6 +301,7 @@ async def finalize_event(interaction: discord.Interaction, creator: discord.Memb
     # Store the event in `active_events`
     active_events[msg.id] = {
         "creator": creator,
+        "channel_id": interaction.channel_id,  # Store the channel ID
         "dungeon": dungeon,
         "difficulty": difficulty,
         "scheduled": sched_str,
@@ -805,21 +822,6 @@ class ConfirmDeleteView(View):
         return True
 
 
-class CancelDeleteButton(Button):
-    """Button to cancel event deletion."""
-    def __init__(self, event_id: int, creator: discord.Member):
-        super().__init__(label="Cancel", style=discord.ButtonStyle.secondary)
-        self.event_id = event_id
-        self.creator = creator
-
-    async def callback(self, interaction: discord.Interaction):
-        # Restore the original EventEditOptionsView
-        await interaction.response.edit_message(
-            content="Event deletion canceled.",
-            view=EventEditOptionsView(self.event_id, self.creator)
-        )
-
-
 class ConfirmDeleteButton(Button):
     """Button to confirm event deletion."""
     def __init__(self, event_id: int):
@@ -834,9 +836,13 @@ class ConfirmDeleteButton(Button):
 
         # Delete the event message
         guild = interaction.guild
-        channel = guild.get_channel(interaction.channel_id)
-        msg = await channel.fetch_message(self.event_id)
-        await msg.delete()
+        channel = guild.get_channel(event_data["channel_id"])  # Use the stored channel ID
+        if channel:
+            try:
+                msg = await channel.fetch_message(self.event_id)
+                await msg.delete()
+            except discord.NotFound:
+                pass  # Message already deleted
 
         # Delete the role pings message if it exists
         role_pings_message = event_data.get("role_pings_message")
@@ -850,6 +856,23 @@ class ConfirmDeleteButton(Button):
         active_events.pop(self.event_id, None)
 
         await interaction.response.send_message("✅ Event deleted successfully.", ephemeral=True)
+
+
+class CancelDeleteButton(Button):
+    """Button to cancel event deletion."""
+    def __init__(self, event_id: int, creator: discord.Member):
+        super().__init__(label="Cancel", style=discord.ButtonStyle.secondary)
+        self.event_id = event_id
+        self.creator = creator
+
+    async def callback(self, interaction: discord.Interaction):
+        # Ensure only the creator can cancel the deletion
+        if interaction.user.id != self.creator.id:
+            await interaction.response.send_message("Only the event creator can cancel this action.", ephemeral=True)
+            return
+
+        # Edit the message to indicate the deletion was canceled
+        await interaction.response.edit_message(content="Event deletion canceled.", view=None)
 
 
 class DeleteEventButton(Button):
