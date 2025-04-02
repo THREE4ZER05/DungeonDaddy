@@ -79,6 +79,8 @@ python daddy.py
 | Command  | Description                        |
 |----------|------------------------------------|
 | `/dd`    | Start creating a dungeon group    |
+| `/setchannel`    | Set the channel for the bot    |
+| `/removechannel`    | Removes the channel restriction    |
 | 🛡️       | Select "Tank" role                |
 | 💚       | Select "Healer" role              |
 | ⚔️       | Select "DPS" role                 |
