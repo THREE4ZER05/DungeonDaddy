@@ -235,20 +235,10 @@ def build_event_embed(
     assigned_roles: dict,
     scheduled_dt: datetime | None = None
 ) -> discord.Embed:
-    """
-    Builds an embed with:
-      - Title: "{creator.display_name}'s Dungeon Group"
-      - Author and thumbnail set to the creator’s display name and avatar.
-      - Description includes Dungeon, Difficulty, and Scheduled time with extra newlines.
-      - Scheduled time is appended with "(Server Time)"; if the creator’s timezone is known, local time is appended.
-      - A separate field for Comment.
-      - Role assignments (Tank, Healer, DPS) are listed vertically.
-      - If the group is full (Tank and Healer assigned, and 3 DPS), a final field displays "🚫 **GROUP FULL** 🚫".
-    """
     embed = discord.Embed(title=f"{creator.display_name}'s Dungeon Group", color=discord.Color.orange())
     embed.set_author(name=creator.display_name, icon_url=creator.display_avatar.url)
     embed.set_thumbnail(url=creator.display_avatar.url)
-    
+
     desc = f"**Dungeon:** {dungeon}\n\n" \
            f"**Difficulty:** {difficulty}\n\n" \
            f"**Scheduled:** {scheduled} (Server Time)"
@@ -264,18 +254,20 @@ def build_event_embed(
 
     if comment:
         embed.add_field(name="Comment", value=comment, inline=False)
-    
+
+    # Display roles
     tank = assigned_roles["Tank"].mention if assigned_roles["Tank"] else "None"
     healer = assigned_roles["Healer"].mention if assigned_roles["Healer"] else "None"
     dps = ", ".join(m.mention for m in assigned_roles["DPS"]) if assigned_roles["DPS"] else "None"
-    
+
     embed.add_field(name="🛡️ Tank", value=tank, inline=False)
     embed.add_field(name="💚 Healer", value=healer, inline=False)
     embed.add_field(name="⚔️ DPS", value=dps, inline=False)
-    
-    if assigned_roles["Tank"] is not None and assigned_roles["Healer"] is not None and len(assigned_roles["DPS"]) >= 3:
+
+    # Show group full status
+    if assigned_roles["Tank"] and assigned_roles["Healer"] and len(assigned_roles["DPS"]) >= 3:
         embed.add_field(name="\u200b", value="🚫 **GROUP FULL** 🚫", inline=False)
-    
+
     return embed
 
 async def finalize_event(interaction: discord.Interaction, creator: discord.Member, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None, comment: str, assigned_roles: dict):
@@ -465,22 +457,18 @@ class ScheduleSelectMenu(Select):
         self.difficulty = difficulty
         options = [discord.SelectOption(label=opt, value=opt) for opt in SCHEDULE_OPTIONS]
         super().__init__(placeholder="Select a start time", options=options)
+
     async def callback(self, interaction: discord.Interaction):
         option = self.values[0]
-        assigned_roles = {"Tank": None, "Healer": None, "DPS": []}
-        if self.creator_role == "Tank":
-            assigned_roles["Tank"] = self.creator
-        elif self.creator_role == "Healer":
-            assigned_roles["Healer"] = self.creator
-        elif self.creator_role == "DPS":
-            assigned_roles["DPS"] = [self.creator]
         if option == "Now":
             sched_str = "Now"
             scheduled_dt = None
         else:  # "Pick a Time"
             return await interaction.response.send_modal(CustomTimeModal(self.creator, self.creator_role, self.dungeon, self.difficulty))
-        await interaction.response.edit_message(content="Would you like to add a comment?", view=CommentPromptView(self.creator, self.creator_role, self.dungeon, self.difficulty, sched_str, scheduled_dt, assigned_roles))
-        
+
+        # Trigger the role assignment modal
+        await interaction.response.send_modal(RoleAssignmentModal(self.creator, self.dungeon, self.difficulty, sched_str, scheduled_dt))
+
 class ScheduleSelectionView(View):
     def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str):
         super().__init__()
@@ -532,18 +520,7 @@ class CustomTimeModal(Modal):
             return
 
         # Proceed with event creation
-        assigned_roles = {"Tank": None, "Healer": None, "DPS": []}
-        if self.creator_role == "Tank":
-            assigned_roles["Tank"] = self.creator
-        elif self.creator_role == "Healer":
-            assigned_roles["Healer"] = self.creator
-        elif self.creator_role == "DPS":
-            assigned_roles["DPS"] = [self.creator]
-
-        await interaction.response.send_message("Event time set!", ephemeral=True)
-        await interaction.followup.send(
-            view=CommentPromptView(self.creator, self.creator_role, self.dungeon, self.difficulty, sched_str, scheduled_dt, assigned_roles)
-        )
+        await interaction.response.send_modal(RoleAssignmentModal(self.creator, self.dungeon, self.difficulty, sched_str, scheduled_dt))
 
 # ------------------ Comment Prompt View ------------------
 class CommentPromptView(View):
@@ -1039,5 +1016,84 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
         assigned
     )
     await message.edit(embed=embed)
+
+# ------------------ Role Assignment Modal ------------------
+class RoleAssignmentModal(Modal):
+    """Modal to assign initial roles when creating an event."""
+    def __init__(self, creator: discord.Member, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None):
+        super().__init__(title="Assign Initial Roles")
+        self.creator = creator
+        self.dungeon = dungeon
+        self.difficulty = difficulty
+        self.sched_str = sched_str
+        self.scheduled_dt = scheduled_dt
+
+        # Text inputs for each role
+        self.tank_input = TextInput(
+            label="Tank (mention or leave blank)",
+            style=discord.TextStyle.short,
+            placeholder="e.g., @TankUser",
+            required=False
+        )
+        self.healer_input = TextInput(
+            label="Healer (mention or leave blank)",
+            style=discord.TextStyle.short,
+            placeholder="e.g., @HealerUser",
+            required=False
+        )
+        self.dps_input = TextInput(
+            label="DPS (mention up to 3, comma-separated)",
+            style=discord.TextStyle.short,
+            placeholder="e.g., @DPSUser1, @DPSUser2",
+            required=False
+        )
+
+        self.add_item(self.tank_input)
+        self.add_item(self.healer_input)
+        self.add_item(self.dps_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse the input for each role
+        guild = interaction.guild
+        assigned_roles = {"Tank": None, "Healer": None, "DPS": []}
+
+        # Parse Tank
+        if self.tank_input.value:
+            tank = await self._get_member_from_input(guild, self.tank_input.value)
+            if tank:
+                assigned_roles["Tank"] = tank
+
+        # Parse Healer
+        if self.healer_input.value:
+            healer = await self._get_member_from_input(guild, self.healer_input.value)
+            if healer:
+                assigned_roles["Healer"] = healer
+
+        # Parse DPS
+        if self.dps_input.value:
+            dps_mentions = [d.strip() for d in self.dps_input.value.split(",")]
+            for mention in dps_mentions:
+                dps_member = await self._get_member_from_input(guild, mention)
+                if dps_member and len(assigned_roles["DPS"]) < 3:
+                    assigned_roles["DPS"].append(dps_member)
+
+        # Proceed to finalize the event
+        await finalize_event(
+            interaction,
+            self.creator,
+            self.dungeon,
+            self.difficulty,
+            self.sched_str,
+            self.scheduled_dt,
+            comment="",
+            assigned_roles=assigned_roles
+        )
+
+    async def _get_member_from_input(self, guild: discord.Guild, input_str: str) -> discord.Member | None:
+        """Helper to parse a member from a mention or username."""
+        if input_str.startswith("<@") and input_str.endswith(">"):
+            member_id = int(input_str.strip("<@!>"))
+            return guild.get_member(member_id)
+        return discord.utils.find(lambda m: m.name == input_str or m.display_name == input_str, guild.members)
 
 bot.run(TOKEN)
