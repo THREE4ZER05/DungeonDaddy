@@ -123,8 +123,8 @@ async def dd(interaction: discord.Interaction):
             await send_error_embed(interaction, f"This command can only be used in <#{allowed_channel_id}>.")
             return
 
-    # ✅ Directly respond without deferring first
-    await interaction.response.send_message(content="Select your role:", view=CreatorRoleSelectionView(), ephemeral=True)
+    # ✅ Directly proceed to dungeon selection
+    await interaction.response.send_message(content="Select a dungeon:", view=DungeonSelectionView(interaction.user), ephemeral=True)
 
 # ------------------ Slash Command: /setchannel ------------------
 @bot.tree.command(name="setchannel", description="Set the bot's designated channel for this server. (ADMIN ONLY)")
@@ -393,66 +393,45 @@ class ChannelSelectionView(View):
 
 
 # ------------------ Interactive Event Creation ------------------
-# Step 1: Creator Role Selection.
-class CreatorRoleSelectButton(Button):
-    def __init__(self, label: str, role: str):
-        super().__init__(label=label, style=discord.ButtonStyle.primary)
-        self.role = role
-
-    async def callback(self, interaction: discord.Interaction):
-        """Handles role selection button press."""
-        creator_role = self.role  # Role that is assigned (Tank/Healer/DPS)
-        # Update the message content and move to the dungeon selection
-        await interaction.response.edit_message(content=f"Role selected: {creator_role}. Now select a dungeon:", view=DungeonSelectionView(interaction.user, creator_role))
-
-class CreatorRoleSelectionView(View):
-    def __init__(self):
-        super().__init__()
-        # Create buttons for each role (Tank, Healer, DPS)
-        self.add_item(CreatorRoleSelectButton("Tank", "Tank"))
-        self.add_item(CreatorRoleSelectButton("Healer", "Healer"))
-        self.add_item(CreatorRoleSelectButton("DPS", "DPS"))
-
 # Step 2: Dungeon Selection.
 class DungeonSelectMenu(Select):
-    def __init__(self, creator: discord.Member, creator_role: str):
+    def __init__(self, creator: discord.Member):
         self.creator = creator
-        self.creator_role = creator_role
         options = [discord.SelectOption(label=d, value=d) for d in DUNGEONS]
         super().__init__(placeholder="Select a Dungeon", options=options)
+
     async def callback(self, interaction: discord.Interaction):
         dungeon = self.values[0]
-        await interaction.response.edit_message(content="Select key level:", view=KeyLevelSelectionView(self.creator, self.creator_role, dungeon))
+        await interaction.response.edit_message(content="Select key level:", view=KeyLevelSelectionView(self.creator, dungeon))
 
 class DungeonSelectionView(View):
-    def __init__(self, creator: discord.Member, creator_role: str):
+    def __init__(self, creator: discord.Member):
         super().__init__()
-        self.add_item(DungeonSelectMenu(creator, creator_role))
+        self.add_item(DungeonSelectMenu(creator))
 
 # Step 3: Key Level Selection.
 class KeyLevelSelectMenu(Select):
     def __init__(self):
         options = [discord.SelectOption(label=level, value=level) for level in KEY_LEVELS]
         super().__init__(placeholder="Select Key Level", options=options)
+
     async def callback(self, interaction: discord.Interaction):
         parent: KeyLevelSelectionView = self.view  # type: ignore
         parent.difficulty = self.values[0]
-        await interaction.response.edit_message(content="Select a start time:", view=ScheduleSelectionView(parent.creator, parent.creator_role, parent.dungeon, parent.difficulty))
-        
+        await interaction.response.edit_message(content="Select a start time:", view=ScheduleSelectionView(parent.creator, parent.dungeon, parent.difficulty))
+
 class KeyLevelSelectionView(View):
-    def __init__(self, creator: discord.Member, creator_role: str, dungeon: str):
+    def __init__(self, creator: discord.Member, dungeon: str):
         super().__init__()
         self.creator = creator
-        self.creator_role = creator_role
         self.dungeon = dungeon
         self.difficulty = None
         self.add_item(KeyLevelSelectMenu())
 
 # Step 4: Schedule Selection.
 class ScheduleSelectMenu(Select):
-    def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str):
+    def __init__(self, creator: discord.Member, dungeon: str, difficulty: str):
         self.creator = creator
-        self.creator_role = creator_role
         self.dungeon = dungeon
         self.difficulty = difficulty
         options = [discord.SelectOption(label=opt, value=opt) for opt in SCHEDULE_OPTIONS]
@@ -464,22 +443,21 @@ class ScheduleSelectMenu(Select):
             sched_str = "Now"
             scheduled_dt = None
         else:  # "Pick a Time"
-            return await interaction.response.send_modal(CustomTimeModal(self.creator, self.creator_role, self.dungeon, self.difficulty))
+            return await interaction.response.send_modal(CustomTimeModal(self.creator, self.dungeon, self.difficulty))
 
         # Trigger the role assignment modal
         await interaction.response.send_modal(RoleAssignmentModal(self.creator, self.dungeon, self.difficulty, sched_str, scheduled_dt))
 
 class ScheduleSelectionView(View):
-    def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str):
+    def __init__(self, creator: discord.Member, dungeon: str, difficulty: str):
         super().__init__()
-        self.add_item(ScheduleSelectMenu(creator, creator_role, dungeon, difficulty))
+        self.add_item(ScheduleSelectMenu(creator, dungeon, difficulty))
 
 # ------------------ Custom Time Modal (for "Pick a Time") ------------------
 class CustomTimeModal(Modal):
-    def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str):
+    def __init__(self, creator: discord.Member, dungeon: str, difficulty: str):
         super().__init__(title="Pick a Custom Time")
         self.creator = creator
-        self.creator_role = creator_role
         self.dungeon = dungeon
         self.difficulty = difficulty
         self.custom_time = TextInput(
@@ -524,10 +502,9 @@ class CustomTimeModal(Modal):
 
 # ------------------ Comment Prompt View ------------------
 class CommentPromptView(View):
-    def __init__(self, creator: discord.Member, creator_role: str, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None, assigned_roles: dict):
+    def __init__(self, creator: discord.Member, dungeon: str, difficulty: str, sched_str: str, scheduled_dt: datetime | None, assigned_roles: dict):
         super().__init__(timeout=180)
         self.creator = creator
-        self.creator_role = creator_role
         self.dungeon = dungeon
         self.difficulty = difficulty
         self.sched_str = sched_str
