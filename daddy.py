@@ -1007,21 +1007,21 @@ class RoleAssignmentModal(Modal):
 
         # Text inputs for each role
         self.tank_input = TextInput(
-            label="Tank (mention or leave blank)",
+            label="Tank (Server Name or leave blank)",
             style=discord.TextStyle.short,
-            placeholder="e.g., @TankUser",
+            placeholder="e.g., TankUser",
             required=False
         )
         self.healer_input = TextInput(
-            label="Healer (mention or leave blank)",
+            label="Healer (Server Name or leave blank)",
             style=discord.TextStyle.short,
-            placeholder="e.g., @HealerUser",
+            placeholder="e.g., HealerUser",
             required=False
         )
         self.dps_input = TextInput(
             label="DPS (mention up to 3, comma-separated)",
             style=discord.TextStyle.short,
-            placeholder="e.g., @DPSUser1, @DPSUser2",
+            placeholder="e.g., DPSUser1, DPSUser2",
             required=False
         )
 
